@@ -30,12 +30,11 @@ for (let i = 0; i <= TOTAL_POINTS; i++) {
   });
 }
 
-// ─── Swirl phase: spiral from center outward ──────────────────────────────────
-// Each heart point is "revealed" from center by lerping from (CX, CY) to its
-// true position over the swirl duration.
-const SWIRL_FRAMES = 90;   // frames to uncoil from center
-const DRAW_SPEED  = 3.5;   // heart-points advanced per frame after swirl
-const TRAIL_LEN   = 22;    // laser tip trail length
+// ─── Config ───────────────────────────────────────────────────────────────────
+const SPIRAL_TURNS   = 5;     // how many full rotations the spiral makes
+const SPIRAL_FRAMES  = 260;   // frames for the outward spiral phase (slow build-up)
+const DRAW_SPEED     = 0.7;   // heart-points advanced per frame (super slow)
+const TRAIL_LEN      = 32;    // laser tip trail length
 
 // ─── Laser colors along the heart ─────────────────────────────────────────────
 const COLORS = [
@@ -57,121 +56,137 @@ let drawn       = 0;
 let done        = false;
 let glowPulse   = 0;
 let animId      = null;
+const trailHistory = [];
 
-// ─── Swirl helpers ────────────────────────────────────────────────────────────
-// Returns the screen position of heart point i during the swirl phase.
-// progress: 0 = fully at center, 1 = fully at true position.
-function getSwirlPoint(i, progress) {
-  const p = heartPoints[i];
+// ─── Spiral OUTWARD from center ───────────────────────────────────────────────
+function getSpiralPos(f) {
+  const prog  = f / SPIRAL_FRAMES;
+  const angle = prog * SPIRAL_TURNS * 2 * Math.PI - Math.PI / 2;
+  const maxR  = 175;
+  const r     = maxR * prog; // grows from 0 outward
   return {
-    x: CX + (p.x - CX) * progress,
-    y: CY + (p.y - CY) * progress,
+    x: CX + Math.cos(angle) * r,
+    y: CY + Math.sin(angle) * r,
   };
 }
 
 // ─── Draw ─────────────────────────────────────────────────────────────────────
 function drawFrame() {
   // Persistent dark fade for trail effect
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.14)';
   ctx.fillRect(0, 0, W, H);
 
   frame++;
 
-  // ── Phase 1: Swirl (spiral uncoiling from center) ─────────────────────────
-  if (frame <= SWIRL_FRAMES) {
-    const progress = frame / SWIRL_FRAMES; // 0 → 1
+  // ── Phase 1: Spiral outward from center ──────────────────────────────────
+  if (frame <= SPIRAL_FRAMES) {
+    const pos  = getSpiralPos(frame);
+    const prog = frame / SPIRAL_FRAMES;
 
-    // Draw all heart segments, morphing from center outward
-    for (let i = 1; i <= TOTAL_POINTS; i++) {
-      const p1 = getSwirlPoint(i - 1, progress);
-      const p2 = getSwirlPoint(i, progress);
-      const color = getColor(i);
+    trailHistory.push({ ...pos });
+    if (trailHistory.length > 80) trailHistory.shift();
 
-      // Add a swirl rotation offset — each point lags based on its index,
-      // creating the spiral unwind illusion
-      const lag = (1 - i / TOTAL_POINTS) * (1 - progress) * Math.PI * 2;
-      const rx1 = CX + (p1.x - CX) * Math.cos(lag) - (p1.y - CY) * Math.sin(lag);
-      const ry1 = CY + (p1.x - CX) * Math.sin(lag) + (p1.y - CY) * Math.cos(lag);
-      const rx2 = CX + (p2.x - CX) * Math.cos(lag) - (p2.y - CY) * Math.sin(lag);
-      const ry2 = CY + (p2.x - CX) * Math.sin(lag) + (p2.y - CY) * Math.cos(lag);
-
-      const alpha = progress * 0.85;
-      ctx.globalAlpha = alpha;
+    // Draw spiral trail
+    for (let i = 1; i < trailHistory.length; i++) {
+      const t  = i / trailHistory.length;
+      const p1 = trailHistory[i - 1];
+      const p2 = trailHistory[i];
+      const hue = 300 + t * 70;
 
       ctx.beginPath();
-      ctx.moveTo(rx1, ry1);
-      ctx.lineTo(rx2, ry2);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 10 * progress;
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.strokeStyle = `hsl(${hue}, 100%, 62%)`;
+      ctx.lineWidth   = 1.8 * t;
+      ctx.globalAlpha = t * 0.85;
+      ctx.shadowColor = `hsl(${hue}, 100%, 62%)`;
+      ctx.shadowBlur  = 10 * t;
       ctx.stroke();
     }
 
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
-
-    // Bright center spark during swirl
-    const sparkR = (1 - progress) * 18 + 2;
-    const grad = ctx.createRadialGradient(CX, CY, 0, CX, CY, sparkR);
-    grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
-    grad.addColorStop(0.4, 'rgba(255, 45, 120, 0.7)');
-    grad.addColorStop(1, 'rgba(200, 0, 255, 0)');
+    // Bright glowing head at spiral tip
+    const headR = 3 + prog * 3;
+    const grad  = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, headR * 4);
+    grad.addColorStop(0,   'rgba(255, 255, 255, 0.99)');
+    grad.addColorStop(0.25,'rgba(255, 45,  120, 0.95)');
+    grad.addColorStop(0.7, 'rgba(200, 0,   255, 0.4)');
+    grad.addColorStop(1,   'rgba(200, 0,   255, 0)');
     ctx.beginPath();
-    ctx.arc(CX, CY, sparkR, 0, Math.PI * 2);
-    ctx.fillStyle = grad;
+    ctx.arc(pos.x, pos.y, headR * 4, 0, Math.PI * 2);
+    ctx.fillStyle   = grad;
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur  = 0;
     ctx.fill();
 
-  // ── Phase 2: Laser drawing along the settled heart ─────────────────────────
+    // Small center spark at the very start
+    if (prog < 0.15) {
+      const fade   = 1 - prog / 0.15;
+      const sparkR = fade * 10 + 2;
+      const sg     = ctx.createRadialGradient(CX, CY, 0, CX, CY, sparkR);
+      sg.addColorStop(0,   'rgba(255, 255, 255, 0.9)');
+      sg.addColorStop(0.5, 'rgba(255, 45,  120, 0.5)');
+      sg.addColorStop(1,   'rgba(200, 0,   255, 0)');
+      ctx.beginPath();
+      ctx.arc(CX, CY, sparkR, 0, Math.PI * 2);
+      ctx.fillStyle   = sg;
+      ctx.globalAlpha = fade;
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur  = 0;
+
+  // ── Phase 2: Laser slowly draws the heart outline ────────────────────────
   } else if (!done) {
     drawn += DRAW_SPEED;
     if (drawn >= TOTAL_POINTS) {
       drawn = TOTAL_POINTS;
-      done = true;
+      done  = true;
     }
 
     const end = Math.floor(drawn);
 
-    // Draw completed segments
+    // Draw completed heart segments
     for (let i = 1; i <= end; i++) {
-      const p1 = heartPoints[i - 1];
-      const p2 = heartPoints[i];
+      const p1    = heartPoints[i - 1];
+      const p2    = heartPoints[i];
       const color = getColor(i);
 
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth   = 1.8;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur  = 10;
+      ctx.globalAlpha = 1;
       ctx.stroke();
     }
 
     // Laser tip glow trail
     const trailStart = Math.max(0, end - TRAIL_LEN);
     for (let i = trailStart; i <= end; i++) {
-      const p = heartPoints[i];
-      const t = (i - trailStart) / TRAIL_LEN;
+      const p     = heartPoints[i];
+      const t     = (i - trailStart) / TRAIL_LEN;
       const color = getColor(i);
 
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 3.5 * t + 1, 0, Math.PI * 2);
-      ctx.fillStyle = color;
+      ctx.arc(p.x, p.y, 3.8 * t + 0.5, 0, Math.PI * 2);
+      ctx.fillStyle   = color;
       ctx.globalAlpha = t;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 28;
+      ctx.shadowBlur  = 32;
       ctx.fill();
     }
 
     ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
+    ctx.shadowBlur  = 0;
 
   // ── Phase 3: Pulse glow after heart is fully drawn ─────────────────────────
   } else {
-    glowPulse += 0.06;
-    const glow  = 14 + Math.sin(glowPulse) * 9;
-    const scale = 1 + Math.sin(glowPulse * 0.5) * 0.025;
+    glowPulse += 0.04;
+    const glow  = 12 + Math.sin(glowPulse) * 9;
+    const scale = 1 + Math.sin(glowPulse * 0.5) * 0.022;
 
     ctx.save();
     ctx.translate(CX, CY);
@@ -179,17 +194,17 @@ function drawFrame() {
     ctx.translate(-CX, -CY);
 
     for (let i = 1; i <= TOTAL_POINTS; i++) {
-      const p1 = heartPoints[i - 1];
-      const p2 = heartPoints[i];
+      const p1    = heartPoints[i - 1];
+      const p2    = heartPoints[i];
       const color = getColor(i);
 
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth   = 2.2;
       ctx.shadowColor = color;
-      ctx.shadowBlur = glow;
+      ctx.shadowBlur  = glow;
       ctx.stroke();
     }
 
@@ -203,10 +218,11 @@ function drawFrame() {
 // ─── Restart ──────────────────────────────────────────────────────────────────
 function restart() {
   cancelAnimationFrame(animId);
-  frame     = 0;
-  drawn     = 0;
-  done      = false;
-  glowPulse = 0;
+  frame             = 0;
+  drawn             = 0;
+  done              = false;
+  glowPulse         = 0;
+  trailHistory.length = 0;
   ctx.clearRect(0, 0, W, H);
   drawFrame();
 }
